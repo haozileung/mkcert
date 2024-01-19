@@ -91,6 +91,7 @@ func main() {
 	}
 	log.SetFlags(0)
 	var (
+		daysFlag      = flag.Int("days", 365, "")
 		installFlag   = flag.Bool("install", false, "")
 		uninstallFlag = flag.Bool("uninstall", false, "")
 		pkcs12Flag    = flag.Bool("pkcs12", false, "")
@@ -143,6 +144,7 @@ func main() {
 		log.Fatalln("ERROR: can't specify extra arguments when using -csr")
 	}
 	(&mkcert{
+		days:        *daysFlag,
 		installMode: *installFlag, uninstallMode: *uninstallFlag, csrPath: *csrFlag,
 		pkcs12: *pkcs12Flag, ecdsa: *ecdsaFlag, client: *clientFlag,
 		certFile: *certFileFlag, keyFile: *keyFileFlag, p12File: *p12FileFlag,
@@ -153,6 +155,7 @@ const rootName = "rootCA.pem"
 const rootKeyName = "rootCA-key.pem"
 
 type mkcert struct {
+	days                       int
 	installMode, uninstallMode bool
 	pkcs12, ecdsa, client      bool
 	keyFile, certFile, p12File string

@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
+	"fmt"
 	"hash"
 	"os"
 	"os/exec"
@@ -108,15 +109,24 @@ func (m *mkcert) uninstallJava() {
 // execKeytool will execute a "keytool" command and if needed re-execute
 // the command with commandWithSudo to work around file permissions.
 func execKeytool(cmd *exec.Cmd) ([]byte, error) {
+	cmd.Env = []string{
+		"JAVA_HOME=" + javaHome,
+		"JAVA_TOOL_OPTIONS=-Duser.language=en",
+	}
 	out, err := cmd.CombinedOutput()
-	if err != nil && bytes.Contains(out, []byte("java.io.FileNotFoundException")) && runtime.GOOS != "windows" {
-		origArgs := cmd.Args[1:]
-		cmd = commandWithSudo(cmd.Path)
-		cmd.Args = append(cmd.Args, origArgs...)
-		cmd.Env = []string{
-			"JAVA_HOME=" + javaHome,
+	if err != nil && bytes.Contains(out, []byte("java.io.FileNotFoundException")) {
+		if runtime.GOOS != "windows" {
+			origArgs := cmd.Args[1:]
+			cmd = commandWithSudo(cmd.Path)
+			cmd.Args = append(cmd.Args, origArgs...)
+			cmd.Env = []string{
+				"JAVA_HOME=" + javaHome,
+				"JAVA_TOOL_OPTIONS=-Duser.language=en",
+			}
+			out, err = cmd.CombinedOutput()
+		} else {
+			fmt.Println("Please run as Adminstrator. or set permissions for:\" " + cacertsPath + "\"")
 		}
-		out, err = cmd.CombinedOutput()
 	}
 	return out, err
 }

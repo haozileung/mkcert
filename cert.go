@@ -15,7 +15,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
-	"io/ioutil"
 	"log"
 	"math/big"
 	"net"
@@ -29,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	pkcs12 "software.sslmate.com/src/go-pkcs12"
+	"software.sslmate.com/src/go-pkcs12"
 )
 
 var userAndHostname string
@@ -56,15 +55,14 @@ func (m *mkcert) makeCert(hosts []string) {
 	fatalIfErr(err, "failed to generate certificate key")
 	pub := priv.(crypto.Signer).Public()
 
-	// Certificates last for 2 years and 3 months, which is always less than
-	// 825 days, the limit that macOS/iOS apply to all certificates,
-	// including custom roots. See https://support.apple.com/en-us/HT210176.
-	expiration := time.Now().AddDate(2, 3, 0)
+	// Certificates default last for 1 years and can be override by command line option days.
+	expiration := time.Now().AddDate(0, 0, m.days)
 
 	tpl := &x509.Certificate{
 		SerialNumber: randomSerialNumber(),
 		Subject: pkix.Name{
-			Organization:       []string{"mkcert development certificate"},
+			CommonName:         hosts[0],
+			Organization:       []string{"Haozi Leung Home CA"},
 			OrganizationalUnit: []string{userAndHostname},
 		},
 
@@ -87,8 +85,7 @@ func (m *mkcert) makeCert(hosts []string) {
 
 	if m.client {
 		tpl.ExtKeyUsage = append(tpl.ExtKeyUsage, x509.ExtKeyUsageClientAuth)
-	}
-	if len(tpl.IPAddresses) > 0 || len(tpl.DNSNames) > 0 || len(tpl.URIs) > 0 {
+	} else if len(tpl.IPAddresses) > 0 || len(tpl.DNSNames) > 0 || len(tpl.URIs) > 0 {
 		tpl.ExtKeyUsage = append(tpl.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
 	}
 	if len(tpl.EmailAddresses) > 0 {
@@ -113,19 +110,20 @@ func (m *mkcert) makeCert(hosts []string) {
 		privPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})
 
 		if certFile == keyFile {
-			err = ioutil.WriteFile(keyFile, append(certPEM, privPEM...), 0600)
+			err = os.WriteFile(keyFile, append(certPEM, privPEM...), 0600)
 			fatalIfErr(err, "failed to save certificate and key")
 		} else {
-			err = ioutil.WriteFile(certFile, certPEM, 0644)
+			err = os.WriteFile(certFile, certPEM, 0644)
 			fatalIfErr(err, "failed to save certificate")
-			err = ioutil.WriteFile(keyFile, privPEM, 0600)
+			err = os.WriteFile(keyFile, privPEM, 0600)
 			fatalIfErr(err, "failed to save certificate key")
 		}
 	} else {
+		encoder := pkcs12.Modern
 		domainCert, _ := x509.ParseCertificate(cert)
-		pfxData, err := pkcs12.Encode(rand.Reader, priv, domainCert, []*x509.Certificate{m.caCert}, "changeit")
+		pfxData, err := encoder.WithRand(rand.Reader).Encode(priv, domainCert, []*x509.Certificate{m.caCert}, "changeit")
 		fatalIfErr(err, "failed to generate PKCS#12")
-		err = ioutil.WriteFile(p12File, pfxData, 0644)
+		err = os.WriteFile(p12File, pfxData, 0644)
 		fatalIfErr(err, "failed to save PKCS#12")
 	}
 
@@ -211,7 +209,7 @@ func (m *mkcert) makeCertFromCSR() {
 		log.Fatalln("ERROR: can't create new certificates because the CA key (rootCA-key.pem) is missing")
 	}
 
-	csrPEMBytes, err := ioutil.ReadFile(m.csrPath)
+	csrPEMBytes, err := os.ReadFile(m.csrPath)
 	fatalIfErr(err, "failed to read the CSR")
 	csrPEM, _ := pem.Decode(csrPEMBytes)
 	if csrPEM == nil {
@@ -225,7 +223,7 @@ func (m *mkcert) makeCertFromCSR() {
 	fatalIfErr(err, "failed to parse the CSR")
 	fatalIfErr(csr.CheckSignature(), "invalid CSR signature")
 
-	expiration := time.Now().AddDate(2, 3, 0)
+	expiration := time.Now().AddDate(0, 0, m.days)
 	tpl := &x509.Certificate{
 		SerialNumber:    randomSerialNumber(),
 		Subject:         csr.Subject,
@@ -267,7 +265,7 @@ func (m *mkcert) makeCertFromCSR() {
 	}
 	certFile, _, _ := m.fileNames(hosts)
 
-	err = ioutil.WriteFile(certFile, pem.EncodeToMemory(
+	err = os.WriteFile(certFile, pem.EncodeToMemory(
 		&pem.Block{Type: "CERTIFICATE", Bytes: cert}), 0644)
 	fatalIfErr(err, "failed to save certificate")
 
@@ -284,7 +282,7 @@ func (m *mkcert) loadCA() {
 		m.newCA()
 	}
 
-	certPEMBlock, err := ioutil.ReadFile(filepath.Join(m.CAROOT, rootName))
+	certPEMBlock, err := os.ReadFile(filepath.Join(m.CAROOT, rootName))
 	fatalIfErr(err, "failed to read the CA certificate")
 	certDERBlock, _ := pem.Decode(certPEMBlock)
 	if certDERBlock == nil || certDERBlock.Type != "CERTIFICATE" {
@@ -297,7 +295,7 @@ func (m *mkcert) loadCA() {
 		return // keyless mode, where only -install works
 	}
 
-	keyPEMBlock, err := ioutil.ReadFile(filepath.Join(m.CAROOT, rootKeyName))
+	keyPEMBlock, err := os.ReadFile(filepath.Join(m.CAROOT, rootKeyName))
 	fatalIfErr(err, "failed to read the CA key")
 	keyDERBlock, _ := pem.Decode(keyPEMBlock)
 	if keyDERBlock == nil || keyDERBlock.Type != "PRIVATE KEY" {
@@ -327,20 +325,21 @@ func (m *mkcert) newCA() {
 	tpl := &x509.Certificate{
 		SerialNumber: randomSerialNumber(),
 		Subject: pkix.Name{
-			Organization:       []string{"mkcert development CA"},
+			Organization:       []string{"Haozi Leung Home CA"},
 			OrganizationalUnit: []string{userAndHostname},
 
 			// The CommonName is required by iOS to show the certificate in the
 			// "Certificate Trust Settings" menu.
 			// https://github.com/FiloSottile/mkcert/issues/47
-			CommonName: "mkcert " + userAndHostname,
+			CommonName: "home " + userAndHostname,
 		},
 		SubjectKeyId: skid[:],
 
 		NotAfter:  time.Now().AddDate(10, 0, 0),
 		NotBefore: time.Now(),
 
-		KeyUsage: x509.KeyUsageCertSign,
+		KeyUsage:    x509.KeyUsageCertSign,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 
 		BasicConstraintsValid: true,
 		IsCA:                  true,
@@ -352,11 +351,11 @@ func (m *mkcert) newCA() {
 
 	privDER, err := x509.MarshalPKCS8PrivateKey(priv)
 	fatalIfErr(err, "failed to encode CA key")
-	err = ioutil.WriteFile(filepath.Join(m.CAROOT, rootKeyName), pem.EncodeToMemory(
+	err = os.WriteFile(filepath.Join(m.CAROOT, rootKeyName), pem.EncodeToMemory(
 		&pem.Block{Type: "PRIVATE KEY", Bytes: privDER}), 0400)
 	fatalIfErr(err, "failed to save CA key")
 
-	err = ioutil.WriteFile(filepath.Join(m.CAROOT, rootName), pem.EncodeToMemory(
+	err = os.WriteFile(filepath.Join(m.CAROOT, rootName), pem.EncodeToMemory(
 		&pem.Block{Type: "CERTIFICATE", Bytes: cert}), 0644)
 	fatalIfErr(err, "failed to save CA certificate")
 
@@ -364,5 +363,5 @@ func (m *mkcert) newCA() {
 }
 
 func (m *mkcert) caUniqueName() string {
-	return "mkcert development CA " + m.caCert.SerialNumber.String()
+	return "Haozi Leung Home CA " + m.caCert.SerialNumber.String()
 }
